@@ -10,7 +10,7 @@ description: >
   After clips are approved, runs scripts/merge_clips.py (FFmpeg) to concatenate
   all clips in narrative order into ./final_animation.mp4. Only needs
   REPLICATE_API_TOKEN in .env. Part of the Story-to-Animation pipeline
-  (Step 5 of 5, final step). Use when shots.json exists and
+  (Step 5 of 6). Use when shots.json exists and
   characters.json/backgrounds.json have image_url fields (populated by
   generate_images.py in Step 3). After generating and merging, ALWAYS present
   output and wait for explicit user approval.

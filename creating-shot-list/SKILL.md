@@ -5,7 +5,7 @@ description: >
   into individual 8-second shots. Each shot maps to specific character IDs, a
   background ID, camera movement, action description, and a self-contained Veo 3
   video-generation prompt. Saves output as shots.json. Part of the
-  Story-to-Animation pipeline (Step 4 of 5). Use when story and asset JSON files
+  Story-to-Animation pipeline (Step 4 of 6). Use when story and asset JSON files
   exist and the user wants to create the shot-by-shot breakdown for video
   generation. After generating shots.json, ALWAYS present the output and wait
   for explicit user approval. Do NOT automatically trigger the next pipeline step.

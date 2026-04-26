@@ -5,7 +5,7 @@ description: >
   screenplay saved as story.md. Use when the user provides a story idea,
   logline, or premise and wants to generate a complete story with scenes,
   characters, dialogue, and visual descriptions for 3D animation production.
-  Part of the Story-to-Animation pipeline (Step 1 of 5). After generating
+  Part of the Story-to-Animation pipeline (Step 1 of 6). After generating
   story.md, ALWAYS present the output and wait for explicit user approval.
   Do NOT automatically trigger the next pipeline step.
 ---

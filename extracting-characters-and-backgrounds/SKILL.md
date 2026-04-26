@@ -4,7 +4,7 @@ description: >
   Reads story.md and extracts all unique characters and background locations.
   Generates detailed Pixar-style 3D image-generation prompts for each, saving
   them as characters.json and backgrounds.json. Part of the Story-to-Animation
-  pipeline (Step 2 of 5). Use when story.md exists and the user wants to prepare
+  pipeline (Step 2 of 6). Use when story.md exists and the user wants to prepare
   character and background prompts for AI image generation. After generating
   both JSON files, ALWAYS present the output and wait for explicit user approval.
   Do NOT automatically trigger the next pipeline step.

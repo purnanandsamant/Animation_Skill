@@ -9,7 +9,7 @@ description: >
   public hosting, and the URL is written back as an image_url field in both JSON
   files — these URLs are required by generate_videos.py. Only needs
   REPLICATE_API_TOKEN in .env. Part of the Story-to-Animation pipeline
-  (Step 3 of 5). Run scripts/generate_images.py to execute. Use when both JSON
+  (Step 3 of 6). Run scripts/generate_images.py to execute. Use when both JSON
   prompt files exist and the user wants to generate the actual reference images.
   After generating all images, ALWAYS present the output and wait for explicit
   user approval. Do NOT automatically trigger the next pipeline step.
