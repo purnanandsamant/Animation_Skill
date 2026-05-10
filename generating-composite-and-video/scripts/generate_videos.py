@@ -33,14 +33,50 @@ import json
 import time
 import threading
 import argparse
+import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import requests
 
 
+# ── Safety prompt rules (appended automatically) ─────────────────────────────
+
+COMPOSITE_SAFETY_SUFFIX = (
+    "Pixar-style 3D animation, cinematic 16:9 wide composition, warm golden-hour lighting, "
+    "high-detail render. STRICTLY ANATOMICALLY CORRECT: each character has exactly the correct "
+    "number of limbs — never extra limbs, never duplicated hands, never fused bodies. Every "
+    "character is physically supported — sitting on a surface, standing on the ground, or clearly "
+    "gripping something with visible hands; NO characters floating unsupported in mid-air. "
+    "ABSOLUTELY no text, no captions, no on-screen lyrics, no letters, no words, no numbers, "
+    "no UI elements, no watermarks, no logos anywhere in the image."
+)
+
+VIDEO_NEGATIVE_PROMPT = (
+    "text, captions, lyrics, subtitles, letters, words, numbers, watermark, logo, ui elements, "
+    "extra limbs, extra hands, deformed anatomy, blurry, low quality, floating character, "
+    "levitating, character suspended in mid-air, unsupported character, character hovering, "
+    "disappearing limbs, morphing bodies, characters merging, new characters appearing, "
+    "characters spawning into frame, characters walking into frame from off-screen"
+)
+
+VIDEO_ANCHOR_SUFFIX = (
+    "IMPORTANT: every character remains physically supported throughout the entire shot — "
+    "either firmly on the ground, standing on a surface, or clearly gripping something "
+    "with both hands. NO character is ever floating or hovering unsupported in mid-air. "
+    "Anatomy stays consistent throughout — correct number of limbs and features at all times."
+)
+
+
 # ── Supported Replicate image models (Phase 1 — composites) ──────────────────
 
 IMAGE_MODELS = {
+    "google/nano-banana": {
+        "description": "Google Nano Banana — proven quality for composites (default)",
+        "prompt_key": "prompt",
+        "image_key": "input_images",
+        "image_is_array": True,
+        "extra_params": {"aspect_ratio": "16:9"},
+    },
     "google/imagen-4-ultra": {
         "description": "Google Imagen 4 Ultra — highest quality, slower",
         "prompt_key": "prompt",
@@ -63,7 +99,7 @@ IMAGE_MODELS = {
         "extra_params": {"aspect_ratio": "16:9"},
     },
     "black-forest-labs/flux-2-flex": {
-        "description": "FLUX.2 Flex — max-quality, 10 reference images (default)",
+        "description": "FLUX.2 Flex — max-quality, 10 reference images",
         "prompt_key": "prompt",
         "image_key": "input_images",
         "image_is_array": True,
@@ -106,27 +142,33 @@ IMAGE_MODELS = {
     },
 }
 
-DEFAULT_IMAGE_MODEL = "black-forest-labs/flux-2-flex"
+DEFAULT_IMAGE_MODEL = "google/nano-banana"
 
 
 # ── Supported Replicate video models (Phase 2 — clips) ───────────────────────
 
 VIDEO_MODELS = {
-    "prunaai/p-video": {
-        "description": "PrunaAI P-Video — fast video generation (default)",
-        "input_key": "image",
-        "prompt_key": "prompt",
-        "extra_params": {},
-    },
     "kwaivgi/kling-v2.5-turbo-pro": {
-        "description": "Kling v2.5 Turbo Pro — high quality, consistent motion",
+        "description": "Kling v2.5 Turbo Pro — high quality, consistent motion (default)",
         "input_key": "start_image",
         "prompt_key": "prompt",
+        "supports_end_image": True,
+        "supports_negative_prompt": True,
+        "negative_prompt_key": "negative_prompt",
+        "extra_params": {"duration": 5, "aspect_ratio": "16:9"},
+    },
+    "prunaai/p-video": {
+        "description": "PrunaAI P-Video — fast video generation",
+        "input_key": "image",
+        "prompt_key": "prompt",
+        "supports_end_image": False,
+        "supports_negative_prompt": False,
+        "negative_prompt_key": None,
         "extra_params": {},
     },
 }
 
-DEFAULT_VIDEO_MODEL = "prunaai/p-video"
+DEFAULT_VIDEO_MODEL = "kwaivgi/kling-v2.5-turbo-pro"
 
 
 # ── Config loading (.env) ─────────────────────────────────────────────────────
@@ -136,10 +178,6 @@ _ENV_TEMPLATE = """\
 # Get your Replicate token from: https://replicate.com/account/api-tokens
 
 REPLICATE_API_TOKEN=your_replicate_api_token_here
-
-# Still needed for Step 3 (generate_images.py) if using kie.ai for image gen:
-# KIE_API_TOKEN=your_kie_api_key_here
-# IMGBB_API_KEY=your_imgbb_api_key_here
 """
 
 def load_env() -> None:
@@ -180,6 +218,7 @@ REPLICATE_API_TOKEN = get_key("REPLICATE_API_TOKEN")
 # ── Replicate API ─────────────────────────────────────────────────────────────
 
 REPLICATE_API_BASE = "https://api.replicate.com/v1"
+AUTH_HEADER = {"Authorization": f"Bearer {REPLICATE_API_TOKEN}"}
 
 
 # ── Tunable settings ──────────────────────────────────────────────────────────
@@ -206,19 +245,13 @@ def fmt_elapsed(start: float) -> str:
 # ── Replicate API helpers ─────────────────────────────────────────────────────
 
 def submit_replicate_prediction(model_id: str, input_payload: dict) -> tuple:
-    """Submit a Replicate prediction. Returns (prediction_id, None) or (None, error)."""
-    body = {
-        "model": model_id,
-        "input": input_payload,
-    }
+    """Submit a Replicate prediction via /v1/models/{owner}/{name}/predictions.
+    Returns (prediction_id, None) or (None, error)."""
     try:
         resp = requests.post(
-            f"{REPLICATE_API_BASE}/predictions",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {REPLICATE_API_TOKEN}",
-            },
-            json=body,
+            f"{REPLICATE_API_BASE}/models/{model_id}/predictions",
+            headers={**AUTH_HEADER, "Content-Type": "application/json"},
+            json={"input": input_payload},
             timeout=30,
         )
         data = resp.json()
@@ -233,12 +266,11 @@ def submit_replicate_prediction(model_id: str, input_payload: dict) -> tuple:
 def poll_replicate_prediction(prediction_id: str, label: str) -> tuple:
     """Poll a Replicate prediction until done. Returns (output_url, None) or (None, error)."""
     url = f"{REPLICATE_API_BASE}/predictions/{prediction_id}"
-    headers = {"Authorization": f"Bearer {REPLICATE_API_TOKEN}"}
 
     for attempt in range(1, MAX_POLLS + 1):
         time.sleep(POLL_INTERVAL)
         try:
-            resp = requests.get(url, headers=headers, timeout=30)
+            resp = requests.get(url, headers=AUTH_HEADER, timeout=30)
             data = resp.json()
             status = data.get("status", "")
 
@@ -249,11 +281,9 @@ def poll_replicate_prediction(prediction_id: str, label: str) -> tuple:
                 elif isinstance(output, list) and output:
                     return output[0], None
                 elif isinstance(output, dict):
-                    # Some models return {"video": url} or {"image": url}
                     for key in ("video", "image", "url", "output"):
                         if output.get(key):
                             return output[key], None
-                    # Return first value
                     vals = list(output.values())
                     if vals:
                         return vals[0], None
@@ -288,11 +318,48 @@ def download_file(url: str, output_path: Path) -> bool:
         return False
 
 
+def upload_to_replicate_files(local_path: Path, content_type: str = "image/png") -> tuple:
+    """Upload a local file to Replicate Files API for permanent hosting.
+    Returns (permanent_url, None) or (None, error)."""
+    try:
+        with open(local_path, "rb") as f:
+            resp = requests.post(
+                f"{REPLICATE_API_BASE}/files",
+                headers=AUTH_HEADER,
+                files={"content": (local_path.name, f, content_type)},
+                timeout=60,
+            )
+        data = resp.json()
+        if resp.status_code in (200, 201):
+            url = data.get("urls", {}).get("get") or data.get("url")
+            if url:
+                return url, None
+            return None, f"No URL in response: {data}"
+        return None, f"HTTP {resp.status_code}: {data}"
+    except Exception as e:
+        return None, str(e)
+
+
+def extract_last_frame(clip_path: Path, output_path: Path) -> bool:
+    """Extract the last frame of a video clip using FFmpeg.
+    Returns True if successful."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-sseof", "-0.1", "-i", str(clip_path),
+             "-frames:v", "1", str(output_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        return result.returncode == 0 and output_path.exists()
+    except Exception:
+        return False
+
+
 # ── Phase 1 worker: composite image via Replicate ────────────────────────────
 
 def run_composite(shot: dict, bg_map: dict, char_map: dict,
                   composite_path: Path, model_id: str, model_config: dict) -> tuple:
-    """Generate one composite image via Replicate. Returns (shot_id, url, None) or (shot_id, None, error)."""
+    """Generate one composite image via Replicate, upload to Files API.
+    Returns (shot_id, permanent_url, None) or (shot_id, None, error)."""
     sid = shot["shot_id"]
     t0  = time.time()
 
@@ -309,10 +376,10 @@ def run_composite(shot: dict, bg_map: dict, char_map: dict,
     if not input_urls:
         return sid, None, "No image_urls found for this shot"
 
+    # Build prompt with safety suffix
     prompt = (
         f"Composited animation scene: {shot.get('action', 'characters in location')}. "
-        f"Pixar-style 3D animation, cinematic 16:9 composition, "
-        f"high quality render, no text, no UI elements."
+        f"{COMPOSITE_SAFETY_SUFFIX}"
     )
 
     # Build input payload based on model config
@@ -322,33 +389,43 @@ def run_composite(shot: dict, bg_map: dict, char_map: dict,
     if model_config.get("image_is_array"):
         input_payload[model_config["image_key"]] = input_urls
     else:
-        # Single-image models: use the first (background) image
         input_payload[model_config["image_key"]] = input_urls[0]
 
     pred_id, err = submit_replicate_prediction(model_id, input_payload)
     if not pred_id:
         return sid, None, f"Submit failed: {err}"
 
-    tprint(f"  [{sid}] composite submitted → prediction: {pred_id[:16]}... (model: {model_id})")
+    tprint(f"  [{sid}] composite submitted -> prediction: {pred_id[:16]}... (model: {model_id})")
 
     url, err = poll_replicate_prediction(pred_id, f"{sid}/composite")
     if not url:
         return sid, None, err
 
-    download_file(url, composite_path)
-    tprint(f"  [{sid}] composite done ({fmt_elapsed(t0)}) → composites/{sid}.png")
-    return sid, url, None
+    if not download_file(url, composite_path):
+        return sid, None, "Download failed"
+
+    # Upload to Replicate Files API for permanent URL (required by Kling)
+    perm_url, upload_err = upload_to_replicate_files(composite_path)
+    if not perm_url:
+        tprint(f"  [{sid}] Files API upload failed ({upload_err}) — using generation URL as fallback")
+        perm_url = url
+
+    tprint(f"  [{sid}] composite done ({fmt_elapsed(t0)}) -> composites/{sid}.png")
+    return sid, perm_url, None
 
 
 # ── Phase 2 worker: video via Replicate ───────────────────────────────────────
 
 def run_video(shot: dict, composite_url: str, clip_path: Path,
-              model_id: str, model_config: dict) -> tuple:
+              model_id: str, model_config: dict,
+              end_image_url: str = None) -> tuple:
     """Generate one video clip via Replicate. Returns (shot_id, True, None) or (shot_id, False, error)."""
     sid = shot["shot_id"]
     t0  = time.time()
 
-    prompt = shot.get("veo_prompt", shot.get("action", ""))
+    # Build video prompt with safety anchor suffix
+    base_prompt = shot.get("veo_prompt", shot.get("action", ""))
+    prompt = f"{base_prompt} {VIDEO_ANCHOR_SUFFIX}"
 
     input_payload = {
         model_config["prompt_key"]: prompt,
@@ -356,18 +433,26 @@ def run_video(shot: dict, composite_url: str, clip_path: Path,
     }
     input_payload.update(model_config.get("extra_params", {}))
 
+    # Add negative prompt if model supports it
+    if model_config.get("supports_negative_prompt") and model_config.get("negative_prompt_key"):
+        input_payload[model_config["negative_prompt_key"]] = VIDEO_NEGATIVE_PROMPT
+
+    # Add end_image if provided and model supports it (start+end frame technique)
+    if end_image_url and model_config.get("supports_end_image"):
+        input_payload["end_image"] = end_image_url
+
     pred_id, err = submit_replicate_prediction(model_id, input_payload)
     if not pred_id:
         return sid, False, f"Submit failed: {err}"
 
-    tprint(f"  [{sid}] video submitted   → prediction: {pred_id[:16]}... (model: {model_id})")
+    tprint(f"  [{sid}] video submitted   -> prediction: {pred_id[:16]}... (model: {model_id})")
 
     url, err = poll_replicate_prediction(pred_id, f"{sid}/video")
     if not url:
         return sid, False, err
 
     if download_file(url, clip_path):
-        tprint(f"  [{sid}] video done ({fmt_elapsed(t0)}) → clips/{sid}.mp4")
+        tprint(f"  [{sid}] video done ({fmt_elapsed(t0)}) -> clips/{sid}.mp4")
         return sid, True, None
 
     return sid, False, "Download failed"
@@ -394,6 +479,10 @@ def main():
         help=f"Replicate model for video generation (default: {DEFAULT_VIDEO_MODEL}).",
     )
     parser.add_argument(
+        "--use-end-frame", action="store_true",
+        help="Use start+end frame technique: extract last frame of previous clip as transition anchor.",
+    )
+    parser.add_argument(
         "--list-models", action="store_true",
         help="List all supported Replicate models and exit.",
     )
@@ -414,6 +503,9 @@ def main():
             default_tag = " (default)" if mid == DEFAULT_VIDEO_MODEL else ""
             print(f"  {mid}{default_tag}")
             print(f"    {info['description']}")
+            end_frame = "yes" if info.get("supports_end_image") else "no"
+            neg_prompt = "yes" if info.get("supports_negative_prompt") else "no"
+            print(f"    End-image support: {end_frame} | Negative prompt: {neg_prompt}")
             print()
 
         print("You can also pass any valid Replicate model ID with --image-model or --video-model.")
@@ -444,6 +536,9 @@ def main():
             "description": f"Custom model: {vid_model_id}",
             "input_key": "image",
             "prompt_key": "prompt",
+            "supports_end_image": False,
+            "supports_negative_prompt": False,
+            "negative_prompt_key": None,
             "extra_params": {},
         }
 
@@ -498,7 +593,8 @@ def main():
         print(f"  Mode        : bulk  ({len(pending)} pending, {len(skipped)} already done)")
 
     print(f"  Image model : {img_model_id}  ({img_model_config['description']})")
-    print(f"  Video model : {vid_model_id}  ({vid_model_config['description']})\n")
+    print(f"  Video model : {vid_model_id}  ({vid_model_config['description']})")
+    print(f"  End-frame   : {'enabled' if args.use_end_frame else 'disabled'}\n")
 
     if skipped:
         print(f"Skipping {len(skipped)} shot(s) with existing clips: {', '.join(skipped)}")
@@ -508,6 +604,7 @@ def main():
 
     Path("composites").mkdir(exist_ok=True)
     Path("clips").mkdir(exist_ok=True)
+    Path("_stage").mkdir(exist_ok=True)
 
     results        = {"success": [], "failed": [], "skipped": skipped}
     composite_urls = {}
@@ -558,13 +655,35 @@ def main():
     else:
         p2_start = time.time()
 
+        # Build shot order map for end-frame extraction
+        shot_order = [s["shot_id"] for s in all_shots]
+
         if args.shot:
             print(f"Phase 2 — Video: generating {args.shot} via {vid_model_id}...\n")
+
+            # Determine end_image_url if using start+end frame technique
+            end_image_url = None
+            if args.use_end_frame and vid_model_config.get("supports_end_image"):
+                idx = shot_order.index(args.shot) if args.shot in shot_order else -1
+                if idx > 0:
+                    prev_sid = shot_order[idx - 1]
+                    prev_clip = Path("clips") / f"{prev_sid}.mp4"
+                    if prev_clip.exists():
+                        lastframe_path = Path("_stage") / f"{prev_sid}_lastframe.png"
+                        if extract_last_frame(prev_clip, lastframe_path):
+                            perm_url, _ = upload_to_replicate_files(lastframe_path)
+                            if perm_url:
+                                end_image_url = composite_urls[video_shots[0]["shot_id"]]
+                                # Swap: start_image = last frame of prev, end_image = this composite
+                                composite_urls[video_shots[0]["shot_id"]] = perm_url
+                                tprint(f"  [{args.shot}] using start+end frame technique")
+
             sid, ok, err = run_video(
                 video_shots[0],
                 composite_urls[video_shots[0]["shot_id"]],
                 Path("clips") / f"{video_shots[0]['shot_id']}.mp4",
                 vid_model_id, vid_model_config,
+                end_image_url=end_image_url,
             )
             if ok:
                 results["success"].append(sid)
@@ -606,8 +725,8 @@ def main():
     print(f"  Skipped        : {len(results['skipped'])} (clips already existed)")
     print(f"  Failed         : {len(results['failed'])}")
     print(f"{'='*55}")
-    print(f"  Composites → ./composites/")
-    print(f"  Clips      → ./clips/")
+    print(f"  Composites -> ./composites/")
+    print(f"  Clips      -> ./clips/")
 
     if results["failed"]:
         print("\nFailed shots (delete composite + clip file then re-run):")

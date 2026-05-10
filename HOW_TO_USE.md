@@ -154,12 +154,15 @@ re-run the script (it skips existing files).
 - Breaks each scene into 1-3 shots of 8 seconds each
 - Assigns character IDs and background IDs to each shot
 - Writes a self-contained video-generation prompt (veo_prompt) for each shot
-- Saves as `shots.json`
+- Creates a `timeline[]` array for playback order (enables chorus/section reuse)
+- Marks transition shots that need start+end frame technique
+- Saves as `shots.json` (two-layer schema: `shots[]` + `timeline[]`)
 
 **What you review:**
 - Does each shot's action match the story?
 - Are the veo_prompts descriptive enough?
 - Is the pacing right (number of shots per scene)?
+- Are repeated sections correctly reusing shot_ids in timeline?
 
 **To proceed:** Say "approved"
 **To change:** e.g., "Add a close-up of Luna's face after shot_003"
@@ -187,13 +190,23 @@ python ~/.claude/skills/generating-composite-and-video/scripts/generate_videos.p
 
 **What the script does:**
 1. Phase 1 — Generates composite scene images (character + background blended)
-2. Phase 2 — Animates each composite into an 8-second video clip
+   - Safety prompts auto-appended (no floating, no extra limbs, no text)
+   - Uploads each composite to Replicate Files API for permanent URLs
+2. Phase 2 — Animates each composite into a video clip via Kling
+   - Negative prompt + safety anchor auto-appended
+   - Optional: start+end frame technique for transition shots (`--use-end-frame`)
 3. Both phases run in parallel — total time is roughly one job, not N jobs
 
 **After approving all clips, merge:**
 ```bash
 python ~/.claude/skills/generating-composite-and-video/scripts/merge_clips.py
+
+# With audio file (for accurate timeline duration)
+python ~/.claude/skills/generating-composite-and-video/scripts/merge_clips.py --audio audio.mp3
 ```
+
+The merge script reads `timeline[]` from shots.json, time-stretches clips to fill
+their allocated slots, and reuses clips for repeated sections (chorus optimization).
 
 Output: `./final_animation.mp4`
 
@@ -270,7 +283,8 @@ Any of these move to the next step:
 
 | Model | Best For |
 |-------|---------|
-| `black-forest-labs/flux-2-flex` | Multi-reference, max quality (default) |
+| `google/nano-banana` | Proven quality, multi-reference (default) |
+| `black-forest-labs/flux-2-flex` | Multi-reference, max quality |
 | `black-forest-labs/flux-2-pro` | Multi-reference, high quality |
 | `google/imagen-4-ultra` | Highest quality |
 | `google/nano-banana-pro` | State of the art |
@@ -280,8 +294,8 @@ Any of these move to the next step:
 
 | Model | Best For |
 |-------|---------|
-| `prunaai/p-video` | Fast generation (default) |
-| `kwaivgi/kling-v2.5-turbo-pro` | Consistent motion, high quality |
+| `kwaivgi/kling-v2.5-turbo-pro` | Consistent motion, high quality (default) |
+| `prunaai/p-video` | Fast generation |
 
 Any valid Replicate model ID works via command-line flags.
 
@@ -293,14 +307,16 @@ MyFirstVideo/
 ├── story.md                  # The screenplay
 ├── characters.json           # Character prompts + image_urls
 ├── backgrounds.json          # Background prompts + image_urls
-├── shots.json                # Shot-by-shot breakdown
+├── shots.json                # Shot breakdown (shots[] + timeline[])
 ├── thumbnail_brief.json      # Thumbnail generation prompt
 ├── shorts_plan.json          # Shorts extraction plan
 ├── publish.md                # YouTube metadata (titles, tags, etc.)
 ├── characters/               # Character reference PNGs
 ├── backgrounds/              # Background reference PNGs
 ├── composites/               # Blended scene images
-├── clips/                    # Individual 8-sec video clips
+├── clips/                    # Individual video clips
+├── _stage/                   # Temp: last-frame extracts for transitions
+├── _stretched/               # Temp: time-stretched clips for merge
 ├── shorts/                   # Vertical 9:16 Shorts clips
 ├── thumbnail.png             # YouTube thumbnail
 └── final_animation.mp4       # The finished video

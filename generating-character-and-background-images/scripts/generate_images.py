@@ -3,8 +3,8 @@
 Generate character and background images using the Replicate API.
 
 Pipeline per image:
-  1. POST /v1/predictions (text-to-image model) → Replicate generates image
-  2. Poll /v1/predictions/{id} until status: succeeded → get output URL
+  1. POST /v1/models/{owner}/{name}/predictions (text-to-image) -> Replicate generates image
+  2. Poll /v1/predictions/{id} until status: succeeded -> get output URL
   3. Download PNG to ./characters/ or ./backgrounds/
   4. Upload to Replicate Files API → get permanent public URL
   5. Store that URL as image_url in characters.json / backgrounds.json
@@ -125,12 +125,13 @@ AUTH_HEADER = {"Authorization": f"Bearer {REPLICATE_API_TOKEN}"}
 # ── Replicate API helpers ─────────────────────────────────────────────────────
 
 def submit_prediction(model_id: str, input_payload: dict) -> tuple:
-    """Submit a prediction. Returns (prediction_id, None) or (None, error)."""
+    """Submit a prediction via /v1/models/{owner}/{name}/predictions.
+    Returns (prediction_id, None) or (None, error)."""
     try:
         resp = requests.post(
-            f"{REPLICATE_API_BASE}/predictions",
+            f"{REPLICATE_API_BASE}/models/{model_id}/predictions",
             headers={**AUTH_HEADER, "Content-Type": "application/json"},
-            json={"model": model_id, "input": input_payload},
+            json={"input": input_payload},
             timeout=30,
         )
         data = resp.json()

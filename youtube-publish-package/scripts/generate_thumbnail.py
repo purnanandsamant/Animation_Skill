@@ -72,9 +72,9 @@ AUTH_HEADER = {"Authorization": f"Bearer {REPLICATE_API_TOKEN}"}
 def submit_prediction(model_id: str, input_payload: dict) -> tuple:
     try:
         resp = requests.post(
-            f"{REPLICATE_API_BASE}/predictions",
+            f"{REPLICATE_API_BASE}/models/{model_id}/predictions",
             headers={**AUTH_HEADER, "Content-Type": "application/json"},
-            json={"model": model_id, "input": input_payload},
+            json={"input": input_payload},
             timeout=30,
         )
         data = resp.json()

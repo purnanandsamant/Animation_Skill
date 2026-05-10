@@ -55,7 +55,7 @@ python ~/.claude/skills/generating-character-and-background-images/scripts/gener
 
 ### What the script does per image:
 
-1. **Generate** — POST to `/v1/predictions` (default model: `flux-1.1-pro`, with aspect_ratio)
+1. **Generate** — POST to `/v1/models/{owner}/{name}/predictions` (default model: `flux-1.1-pro`, with aspect_ratio)
 2. **Poll** — GET `/v1/predictions/{id}` until `status: succeeded`; extract output URL
 3. **Download** — save PNG to `./characters/{id}.png` or `./backgrounds/{id}.png`
 4. **Upload** — POST PNG to Replicate Files API (`/v1/files`); get permanent URL
