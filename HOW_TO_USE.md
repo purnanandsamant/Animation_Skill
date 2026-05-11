@@ -143,26 +143,37 @@ re-run the script (it skips existing files).
 
 ---
 
-### Step 4 — Create the Shot List
+### Step 4 — Create the Shot List (Scene-by-Scene)
 
 **What you say:**
 
 > "Create the shot list"
 
-**What Claude does:**
-- Reads `story.md`, `characters.json`, `backgrounds.json`
-- Breaks each scene into 1-3 shots of 8 seconds each
-- Assigns character IDs and background IDs to each shot
-- Writes a self-contained video-generation prompt (veo_prompt) for each shot
-- Creates a `timeline[]` array for playback order (enables chorus/section reuse)
-- Marks transition shots that need start+end frame technique
-- Saves as `shots.json` (two-layer schema: `shots[]` + `timeline[]`)
+**How it works — collaborative, one scene at a time:**
 
-**What you review:**
-- Does each shot's action match the story?
-- Are the veo_prompts descriptive enough?
-- Is the pacing right (number of shots per scene)?
-- Are repeated sections correctly reusing shot_ids in timeline?
+Claude presents each scene from `story.md` and asks: *"How do you visualize this?"*
+You describe your vision — camera angles, mood, pacing, character actions. Claude
+then crafts 1-3 Kling-optimized video prompts per scene based on your direction.
+
+This goes scene by scene:
+1. Claude shows you Scene 1 and asks for your vision
+2. You describe what you want to see
+3. Claude drafts shots with Kling-native prompts (multi-step causal instructions,
+   precise camera moves, physical grounding)
+4. You approve, edit, or ask for changes
+5. Move to Scene 2, repeat...
+
+**Kling prompt style** — instead of generic art-style descriptions, prompts use
+Kling's strengths: "First the fox looks down, then it looks up at the eagle,
+finally it crouches low preparing to leap. Camera slowly pushes in..."
+
+**What you review per scene:**
+- Does each shot match your vision for this moment?
+- Are the camera movements what you imagined?
+- Is the pacing right?
+- Does the prompt capture the emotion you want?
+
+**After all scenes:** Claude assembles everything into `shots.json` with timeline.
 
 **To proceed:** Say "approved"
 **To change:** e.g., "Add a close-up of Luna's face after shot_003"

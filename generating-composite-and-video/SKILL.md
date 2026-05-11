@@ -113,7 +113,8 @@ All shots submitted simultaneously via the Replicate predictions API.
 All shots submitted simultaneously via the Replicate predictions API.
 
 - `start_image` = permanent Replicate Files URL of the composite
-- `prompt` = `veo_prompt` field + video anchor safety suffix (auto-appended)
+- `prompt` = `video_prompt` field (Kling-optimized, crafted scene-by-scene with user) + safety suffix (auto-appended)
+  - Falls back to `veo_prompt` (legacy) or `action` if `video_prompt` is missing
 - `negative_prompt` = anti-text, anti-floating, anti-morphing rules (auto-appended)
 - For transition shots with `--use-end-frame`: extracts last frame of previous clip,
   uploads to Replicate Files, sends as `start_image` with composite as `end_image`

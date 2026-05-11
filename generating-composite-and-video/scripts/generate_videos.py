@@ -424,7 +424,8 @@ def run_video(shot: dict, composite_url: str, clip_path: Path,
     t0  = time.time()
 
     # Build video prompt with safety anchor suffix
-    base_prompt = shot.get("veo_prompt", shot.get("action", ""))
+    # Prefer video_prompt (Kling-optimized), fall back to veo_prompt (legacy), then action
+    base_prompt = shot.get("video_prompt", shot.get("veo_prompt", shot.get("action", "")))
     prompt = f"{base_prompt} {VIDEO_ANCHOR_SUFFIX}"
 
     input_payload = {
